@@ -1,0 +1,33 @@
+[project]
+name = "qwen3-tts-voice-clone"
+version = "0.1.0"
+description = "Voice cloning tools using Qwen3-TTS"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "qwen-tts",
+    "torch",
+    "torchaudio",
+    "soundfile",
+    "numpy",
+    "gradio",
+    "ipykernel",
+    "ipywidgets",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+# PyTorch index for CUDA 12.1
+extra-index-url = ["https://download.pytorch.org/whl/cu121"]
+
+[tool.uv.sources]
+# You can pin specific versions here if needed
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

@@ -1,0 +1,30 @@
+# Qwen3-TTS Voice Cloning Requirements
+# =====================================
+# Install with: pip install -r requirements.txt
+# Or with uv:   uv pip install -r requirements.txt
+
+# Core TTS
+qwen-tts
+
+# PyTorch (CUDA 12.1) - adjust for your CUDA version
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchaudio
+
+# Audio processing
+soundfile
+numpy
+
+# Web UI
+gradio
+
+# Jupyter Notebook support
+ipykernel
+ipywidgets
+
+# Optional: for recorder.py (currently not needed, uses WAV)
+# pydub
+
+# Optional: Flash Attention (requires CUDA 12.4+)
+# See: https://huggingface.co/lldacing/flash-attention-windows-wheel
+# flash-attn

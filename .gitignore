@@ -1,0 +1,38 @@
+# Qwen3-TTS Model directories (download separately via huggingface-cli or modelscope)
+Qwen3-TTS-12Hz-0.6B-Base/
+Qwen3-TTS-12Hz-0.6B-CustomVoice/
+Qwen3-TTS-12Hz-1.7B-Base/
+Qwen3-TTS-12Hz-1.7B-CustomVoice/
+Qwen3-TTS-12Hz-1.7B-VoiceDesign/
+Qwen3-TTS-Tokenizer-12Hz/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Audio files (generated/recorded by user)
+assets/output/*.wav
+!assets/output/.gitkeep
+assets/voices/*.wav
+!assets/voices/.gitkeep
+assets/samples/*.wav
+assets/examples/*.wav
