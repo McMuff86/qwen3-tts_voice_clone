@@ -1,10 +1,38 @@
 # Qwen3-TTS Project Notes
 
+## Architecture (v0.2.0)
+
+### Core Modules (`src/`)
+| Module | Purpose |
+|--------|---------|
+| `config.py` | Centralized config, env vars, model registry |
+| `engine.py` | Singleton model loading, VRAM management, generation API |
+| `audio_utils.py` | Resampling, normalization, combine, save/load |
+| `app.py` | Gradio web UI (3 tabs: Clone, Custom, Design) |
+
+### Scripts (`scripts/`)
+| Script | Description | Run |
+|--------|-------------|-----|
+| `clone_from_file.py` | CLI voice cloning with argparse | `python scripts/clone_from_file.py --ref voice.wav "Text"` |
+| `recorder.py` | Voice recorder UI | `python scripts/recorder.py` → :7860 |
+| `templates/*.py` | Example scripts for each feature | `python scripts/templates/voice_clone.py` |
+
+### Legacy Scripts (root)
+Old scripts still work but use direct model loading. Migrate to `src.engine.TTSEngine` for new code.
+
+| Script | Replacement |
+|--------|-------------|
+| `voice_clone_app.py` | `python -m src.app` |
+| `voice_clone_from_file.py` | `scripts/clone_from_file.py` |
+| `recorder.py` | `scripts/recorder.py` |
+| `template_*.py` | `scripts/templates/*.py` |
+| `run_tts_test.py` | `scripts/templates/custom_voice.py` |
+
 ## Folder Structure
 
 ```
 assets/
-├── voices/       # Voice reference/template audio files (your voice samples)
+├── voices/       # Voice reference/template audio files
 ├── output/       # Generated audio files
 └── samples/      # Example outputs to keep
 ```
@@ -14,16 +42,9 @@ assets/
 ### Option 1: With uv (recommended, fast)
 
 ```bash
-# Install uv (if not installed)
-pip install uv
-
-# Create virtual environment and install
 uv venv --python 3.12
 .venv\Scripts\activate  # Windows
 uv pip install -r requirements.txt
-
-# Register Jupyter kernel
-python -m ipykernel install --user --name qwen3-tts --display-name "Python (qwen3-tts)"
 ```
 
 ### Option 2: With Conda
@@ -32,49 +53,34 @@ python -m ipykernel install --user --name qwen3-tts --display-name "Python (qwen
 conda create -n qwen3-tts python=3.12 -y
 conda activate qwen3-tts
 pip install -r requirements.txt
-python -m ipykernel install --user --name qwen3-tts --display-name "Python (qwen3-tts)"
 ```
 
-### Option 3: With pip
+### Option 3: Automated
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-pip install -r requirements.txt
+python setup.py
 ```
 
 ## Environment Info
 
 - **Python:** 3.12
 - **PyTorch:** 2.5.1+cu121 (CUDA 12.1)
-- **Attention Implementation:** `sdpa` (PyTorch's native Scaled Dot Product Attention)
+- **Attention:** `sdpa` (default) or `flash_attention_2` (set via `QWEN_TTS_ATTN`)
 
-### Note on Flash Attention
-Flash Attention 2 is not installed. To enable it:
-1. Upgrade PyTorch to CUDA 12.4: `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124`
-2. Install prebuilt wheel from HuggingFace
-3. Change `attn_implementation` to `"flash_attention_2"` in scripts
+## Configuration
 
-Current setup uses `sdpa` which works well without additional dependencies.
+All settings via environment variables or `.env`:
 
-## Apps & Scripts
-
-### Main Apps
-| Script | Description | Run |
-|--------|-------------|-----|
-| `voice_clone_app.py` | Gradio Web UI for voice cloning | `python voice_clone_app.py` → http://127.0.0.1:7861 |
-| `voice_clone_notebook.ipynb` | Jupyter Notebook version | Open in VS Code/Jupyter |
-| `voice_clone_from_file.py` | CLI script for voice cloning | `python voice_clone_from_file.py` |
-| `recorder.py` | Record voice templates | `python recorder.py` → http://127.0.0.1:7860 |
-
-### Template Scripts
-| Script | Model | Description |
-|--------|-------|-------------|
-| `run_tts_test.py` | CustomVoice | Basic TTS with predefined speakers (Ryan, Aiden, etc.) |
-| `template_voice_design.py` | VoiceDesign | Create voices from natural language descriptions |
-| `template_voice_clone.py` | Base | Clone voices from reference audio |
-| `template_voice_design_then_clone.py` | VoiceDesign + Base | Design voice, then clone for consistent generation |
-| `template_tokenizer.py` | Tokenizer | Encode/decode audio to/from tokens |
+```bash
+QWEN_TTS_DEVICE=cuda:0
+QWEN_TTS_DTYPE=bfloat16
+QWEN_TTS_ATTN=sdpa
+QWEN_TTS_MODEL_SIZE=1.7B
+QWEN_TTS_LANGUAGE=German
+QWEN_TTS_VOICES_DIR=assets/voices
+QWEN_TTS_OUTPUT_DIR=assets/output
+QWEN_TTS_GRADIO_PORT=7861
+```
 
 ## Available Models (Downloaded)
 
@@ -102,3 +108,13 @@ Current setup uses `sdpa` which works well without additional dependencies.
 ## Supported Languages
 
 Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian
+
+## TODO
+
+- [ ] Add basic tests (pytest)
+- [ ] Type hints for all public functions
+- [ ] Batch generation progress callback in engine
+- [ ] MP3 export option
+- [ ] Audio preprocessing (auto-resample reference to optimal SR)
+- [ ] Model preloading option for app startup
+- [ ] API server mode (FastAPI) for external integration
