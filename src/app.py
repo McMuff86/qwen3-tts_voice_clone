@@ -16,7 +16,7 @@ import gradio as gr
 import numpy as np
 
 from src.config import config
-from src.engine import TTSEngine
+from src.engine import TTSEngine, TTSResult
 from src.audio_utils import combine_audio_segments, save_audio
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ def get_engine() -> TTSEngine:
 
 
 # ---------------------------------------------------------------------------
-# Helper functions
+# Constants
 # ---------------------------------------------------------------------------
 
 SUPPORTED_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg")
@@ -53,16 +53,21 @@ SPEAKERS = [
     "Dylan", "Eric", "Ono_Anna", "Sohee",
 ]
 
+MODEL_SIZES = ["1.7B", "0.6B"]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def get_voice_files() -> list[str]:
     """Get list of voice files in the voices directory."""
     if not config.voices_dir.exists():
         return []
-    files = [
+    return sorted(
         f.name for f in config.voices_dir.iterdir()
         if f.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
-    return sorted(files)
+    )
 
 
 def preview_voice(voice_file: str | None) -> str | None:
@@ -72,6 +77,22 @@ def preview_voice(voice_file: str | None) -> str | None:
         if path.exists():
             return str(path)
     return None
+
+
+def parse_texts(raw: str) -> list[str]:
+    """Split multiline text into individual lines."""
+    return [t.strip() for t in raw.strip().split("\n") if t.strip()]
+
+
+def format_result(result: TTSResult, extra_lines: list[str] | None = None) -> str:
+    """Format generation result as status text."""
+    lines: list[str] = []
+    for f in result.saved_files:
+        lines.append(f"✅ {f.name}")
+    lines.append(f"⏱️ {result.summary}")
+    if extra_lines:
+        lines.extend(extra_lines)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +105,12 @@ def clone_voice(
     reference_text: str,
     text_to_generate: str,
     language: str,
+    model_size: str,
     combine_audio: bool,
     pause_seconds: float,
     progress: gr.Progress = gr.Progress(),
 ) -> tuple[tuple[int, np.ndarray] | None, str | None, str]:
-    """Main voice cloning function."""
+    """Main voice cloning function with real progress tracking."""
 
     # Determine voice file
     if voice_file_upload is not None:
@@ -103,19 +125,17 @@ def clone_voice(
     if not Path(ref_audio_path).exists():
         return None, None, f"❌ Datei nicht gefunden: {ref_audio_path}"
 
-    # Parse text
-    texts = [t.strip() for t in text_to_generate.strip().split("\n") if t.strip()]
+    texts = parse_texts(text_to_generate)
     if not texts:
         return None, None, "❌ Bitte Text eingeben!"
-
-    status_lines: list[str] = []
 
     try:
         engine = get_engine()
 
-        # Progress tracking
-        for i in range(len(texts)):
-            progress((i) / len(texts), f"Generiere {i + 1}/{len(texts)}...")
+        def on_progress(i: int, n: int, text: str) -> None:
+            progress(i / (n + 1), f"[{i}/{n}] {text[:50]}...")
+
+        progress(0, "Lade Modell / erstelle Voice-Prompt...")
 
         result = engine.clone_voice(
             ref_audio=ref_audio_path,
@@ -124,24 +144,29 @@ def clone_voice(
             ref_text=reference_text if reference_text and reference_text.strip() else None,
             output_prefix=voice_name,
             save=True,
+            model_size=model_size,
+            on_progress=on_progress,
         )
 
-        for f in result.saved_files:
-            status_lines.append(f"✅ Gespeichert: {f.name}")
+        progress(1.0, "Fertig!")
 
         # Combine if requested
+        extra: list[str] = []
         if combine_audio and len(result.audio_segments) > 1:
             combined = result.combined_with_pause(pause_seconds)
             combined_path = config.output_dir / f"{voice_name}_combined.wav"
             save_audio(combined, result.sample_rate, combined_path)
-            status_lines.append(f"✅ Kombiniert: {combined_path.name}")
-            return (result.sample_rate, combined), str(combined_path), "\n".join(status_lines)
+            extra.append(f"✅ Kombiniert: {combined_path.name}")
+            return (
+                (result.sample_rate, combined),
+                str(combined_path),
+                format_result(result, extra),
+            )
 
-        # Single file
         return (
             (result.sample_rate, result.audio),
             str(result.saved_files[0]) if result.saved_files else None,
-            "\n".join(status_lines),
+            format_result(result),
         )
 
     except RuntimeError as e:
@@ -160,17 +185,22 @@ def generate_custom_voice(
     language: str,
     speaker: str,
     instruct: str,
+    model_size: str,
     progress: gr.Progress = gr.Progress(),
 ) -> tuple[tuple[int, np.ndarray] | None, str | None, str]:
     """Generate speech with a predefined speaker."""
 
-    texts = [t.strip() for t in text_to_generate.strip().split("\n") if t.strip()]
+    texts = parse_texts(text_to_generate)
     if not texts:
         return None, None, "❌ Bitte Text eingeben!"
 
     try:
         engine = get_engine()
-        progress(0.5, "Generiere...")
+
+        def on_progress(i: int, n: int, text: str) -> None:
+            progress(i / (n + 1), f"[{i}/{n}] {text[:50]}...")
+
+        progress(0, "Lade Modell...")
 
         result = engine.generate_custom(
             texts=texts,
@@ -178,15 +208,21 @@ def generate_custom_voice(
             language=language,
             instruct=instruct if instruct and instruct.strip() else None,
             output_prefix=f"custom_{speaker.lower()}",
+            model_size=model_size,
+            on_progress=on_progress,
         )
 
-        status = "\n".join(f"✅ Gespeichert: {f.name}" for f in result.saved_files)
+        progress(1.0, "Fertig!")
 
         if len(result.audio_segments) > 1:
             combined = result.combined
-            return (result.sample_rate, combined), str(result.saved_files[0]), status
+            return (result.sample_rate, combined), str(result.saved_files[0]), format_result(result)
 
-        return (result.sample_rate, result.audio), str(result.saved_files[0]), status
+        return (
+            (result.sample_rate, result.audio),
+            str(result.saved_files[0]) if result.saved_files else None,
+            format_result(result),
+        )
 
     except RuntimeError as e:
         return None, None, f"❌ {e}"
@@ -203,11 +239,12 @@ def design_and_generate(
     text_to_generate: str,
     language: str,
     voice_description: str,
+    model_size: str,
     progress: gr.Progress = gr.Progress(),
 ) -> tuple[tuple[int, np.ndarray] | None, str | None, str]:
     """Design a voice from description and generate speech."""
 
-    texts = [t.strip() for t in text_to_generate.strip().split("\n") if t.strip()]
+    texts = parse_texts(text_to_generate)
     if not texts:
         return None, None, "❌ Bitte Text eingeben!"
 
@@ -216,17 +253,28 @@ def design_and_generate(
 
     try:
         engine = get_engine()
-        progress(0.5, "Generiere...")
+
+        def on_progress(i: int, n: int, text: str) -> None:
+            progress(i / (n + 1), f"[{i}/{n}] {text[:50]}...")
+
+        progress(0, "Lade Modell...")
 
         result = engine.design_voice(
             texts=texts,
             voice_description=voice_description.strip(),
             language=language,
             output_prefix="designed",
+            model_size=model_size,
+            on_progress=on_progress,
         )
 
-        status = "\n".join(f"✅ Gespeichert: {f.name}" for f in result.saved_files)
-        return (result.sample_rate, result.audio), str(result.saved_files[0]), status
+        progress(1.0, "Fertig!")
+
+        return (
+            (result.sample_rate, result.audio),
+            str(result.saved_files[0]) if result.saved_files else None,
+            format_result(result),
+        )
 
     except RuntimeError as e:
         return None, None, f"❌ {e}"
@@ -259,7 +307,7 @@ def build_app() -> gr.Blocks:
                             info="Gespeicherte Stimmvorlagen",
                         )
                         with gr.Row():
-                            refresh_btn = gr.Button("🔄 Aktualisieren", size="sm")
+                            refresh_btn = gr.Button("🔄", size="sm", min_width=40)
                             preview_audio = gr.Audio(
                                 label="Vorschau",
                                 type="filepath",
@@ -286,18 +334,27 @@ def build_app() -> gr.Blocks:
 
                         clone_text = gr.Textbox(
                             label="Text",
-                            placeholder="Text eingeben...\nJede Zeile wird einzeln generiert.",
+                            placeholder="Text eingeben...\nJede Zeile = separates Audio.",
                             lines=6,
                             value="Hallo, das ist ein Test der Stimmenklonungs-Technologie.\nIch kann alles sagen, was du möchtest.",
                         )
-                        clone_language = gr.Dropdown(
-                            choices=LANGUAGES,
-                            value=config.default_language,
-                            label="Sprache",
-                        )
+                        with gr.Row():
+                            clone_language = gr.Dropdown(
+                                choices=LANGUAGES,
+                                value=config.default_language,
+                                label="Sprache",
+                            )
+                            clone_model_size = gr.Dropdown(
+                                choices=MODEL_SIZES,
+                                value=config.model_size,
+                                label="Modell",
+                                info="1.7B = besser, 0.6B = schneller",
+                            )
                         with gr.Row():
                             combine_check = gr.Checkbox(label="Kombinieren", value=True)
-                            pause_slider = gr.Slider(0, 2, value=0.5, step=0.1, label="Pause (Sek)")
+                            pause_slider = gr.Slider(
+                                0, 2, value=0.5, step=0.1, label="Pause (Sek)"
+                            )
 
                 clone_btn = gr.Button("🎙️ Voice klonen", variant="primary", size="lg")
 
@@ -322,7 +379,8 @@ def build_app() -> gr.Blocks:
                     fn=clone_voice,
                     inputs=[
                         voice_dropdown, voice_upload, reference_text,
-                        clone_text, clone_language, combine_check, pause_slider,
+                        clone_text, clone_language, clone_model_size,
+                        combine_check, pause_slider,
                     ],
                     outputs=[clone_audio_out, clone_file_out, clone_status],
                 )
@@ -340,6 +398,11 @@ def build_app() -> gr.Blocks:
                             label="Stil-Anweisung (optional)",
                             placeholder="z.B. 'Speak with enthusiasm and warmth.'",
                             lines=2,
+                        )
+                        custom_model_size = gr.Dropdown(
+                            choices=MODEL_SIZES,
+                            value=config.model_size,
+                            label="Modell",
                         )
                     with gr.Column():
                         custom_text = gr.Textbox(
@@ -365,7 +428,10 @@ def build_app() -> gr.Blocks:
 
                 custom_btn.click(
                     fn=generate_custom_voice,
-                    inputs=[custom_text, custom_language, custom_speaker, custom_instruct],
+                    inputs=[
+                        custom_text, custom_language, custom_speaker,
+                        custom_instruct, custom_model_size,
+                    ],
                     outputs=[custom_audio_out, custom_file_out, custom_status],
                 )
 
@@ -375,8 +441,16 @@ def build_app() -> gr.Blocks:
                     with gr.Column():
                         design_description = gr.Textbox(
                             label="Stimmbeschreibung",
-                            placeholder="z.B. 'A warm, deep male voice in his 40s with a slight German accent.'",
+                            placeholder=(
+                                "z.B. 'A warm, deep male voice in his 40s "
+                                "with a slight German accent.'"
+                            ),
                             lines=3,
+                        )
+                        design_model_size = gr.Dropdown(
+                            choices=MODEL_SIZES,
+                            value=config.model_size,
+                            label="Modell",
                         )
                     with gr.Column():
                         design_text = gr.Textbox(
@@ -402,9 +476,21 @@ def build_app() -> gr.Blocks:
 
                 design_btn.click(
                     fn=design_and_generate,
-                    inputs=[design_text, design_language, design_description],
+                    inputs=[
+                        design_text, design_language, design_description,
+                        design_model_size,
+                    ],
                     outputs=[design_audio_out, design_file_out, design_status],
                 )
+
+        # ── Footer ────────────────────────────────────────────────────────
+        gr.Markdown(
+            "<center><sub>"
+            "Qwen3-TTS Voice Clone v0.2.0 · "
+            f"Output: `{config.output_dir}` · "
+            f"Voices: `{config.voices_dir}`"
+            "</sub></center>"
+        )
 
     return demo
 

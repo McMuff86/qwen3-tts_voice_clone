@@ -105,6 +105,45 @@ class Config:
         self.voices_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    def check_cuda(self) -> dict[str, object]:
+        """Check CUDA availability and return device info.
+
+        Returns a dict with keys: available, device_name, vram_total_gb, vram_free_gb.
+        If CUDA is not available, falls back to CPU and logs a warning.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        info: dict[str, object] = {"available": False}
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                info["available"] = True
+                info["device_name"] = torch.cuda.get_device_name(0)
+                vram_total = torch.cuda.get_device_properties(0).total_mem
+                vram_free = vram_total - torch.cuda.memory_allocated(0)
+                info["vram_total_gb"] = round(vram_total / 1e9, 1)
+                info["vram_free_gb"] = round(vram_free / 1e9, 1)
+                logger.info(
+                    "CUDA available: %s (%.1f GB total, %.1f GB free)",
+                    info["device_name"],
+                    info["vram_total_gb"],
+                    info["vram_free_gb"],
+                )
+            else:
+                logger.warning(
+                    "CUDA not available! Falling back to CPU. "
+                    "Generation will be very slow."
+                )
+                self.device = "cpu"
+
+        except ImportError:
+            logger.warning("PyTorch not installed. Cannot check CUDA.")
+
+        return info
+
     # --- factory -----------------------------------------------------------
 
     @classmethod

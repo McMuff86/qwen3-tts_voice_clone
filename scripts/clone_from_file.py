@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
 """
-CLI Voice Cloning Script.
-=========================
-Clone a voice from an audio file and generate new speech.
+CLI Voice Generation Script.
+=============================
+Supports voice cloning, custom voices, and voice design.
 
 Usage:
-    python scripts/clone_from_file.py --ref assets/voices/my_voice.wav "Hello world"
-    python scripts/clone_from_file.py --ref my_voice.wav --lang German "Hallo Welt"
-    python scripts/clone_from_file.py --ref my_voice.wav --transcript "original text" "New text"
-    python scripts/clone_from_file.py --ref my_voice.wav -o output/ "Line 1" "Line 2" "Line 3"
+    # Voice cloning
+    python scripts/clone_from_file.py clone --ref my_voice.wav "Hello world"
+    python scripts/clone_from_file.py clone --ref my_voice.wav --lang German "Hallo Welt"
+    python scripts/clone_from_file.py clone --ref voice.wav --transcript "ref text" "New text"
 
-Multiple texts are generated as separate files. Use --combine to merge them.
+    # Custom voice (predefined speakers)
+    python scripts/clone_from_file.py custom --speaker Ryan "Hello world"
+    python scripts/clone_from_file.py custom --speaker Aiden --instruct "Speak calmly" "Text"
+
+    # Voice design (from description)
+    python scripts/clone_from_file.py design --desc "A warm male voice, 40s" "Hello world"
+
+    # Common options (all modes)
+    --lang German --model-size 0.6B --combine --pause 0.8 -o output/
+
+    # Default mode is 'clone' for backwards compatibility
+    python scripts/clone_from_file.py --ref my_voice.wav "Hello world"
 """
 
 from __future__ import annotations
@@ -30,142 +41,192 @@ from src.engine import TTSEngine
 from src.audio_utils import combine_audio_segments, save_audio
 
 
-def parse_args() -> argparse.Namespace:
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Clone a voice and generate speech with Qwen3-TTS.",
+        description="Qwen3-TTS voice generation CLI.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --ref assets/voices/my_voice.wav "Hello world"
-  %(prog)s --ref my_voice.wav --lang German "Hallo Welt" "Wie geht es dir?"
-  %(prog)s --ref my_voice.wav --transcript "what is said in audio" "New text"
-  %(prog)s --ref my_voice.wav --combine --pause 0.8 "Line 1" "Line 2"
-        """,
     )
 
-    parser.add_argument(
-        "texts",
-        nargs="+",
-        help="Text(s) to generate. Each argument becomes a separate audio file.",
-    )
-    parser.add_argument(
-        "--ref", "-r",
-        required=True,
-        help="Reference audio file (path or filename in assets/voices/).",
-    )
-    parser.add_argument(
-        "--transcript", "-t",
-        default=None,
-        help="Transcript of the reference audio (improves quality).",
-    )
-    parser.add_argument(
-        "--lang", "-l",
-        default=None,
-        help=f"Target language (default: {config.default_language}).",
-    )
-    parser.add_argument(
-        "--output-dir", "-o",
-        default=None,
-        help=f"Output directory (default: {config.output_dir}).",
-    )
-    parser.add_argument(
-        "--prefix", "-p",
-        default="clone",
-        help="Output filename prefix (default: clone).",
-    )
-    parser.add_argument(
-        "--combine", "-c",
-        action="store_true",
-        help="Also save a combined file with all texts merged.",
-    )
-    parser.add_argument(
-        "--pause",
-        type=float,
-        default=0.5,
-        help="Pause between sentences in combined file, in seconds (default: 0.5).",
-    )
-    parser.add_argument(
-        "--model-size",
-        choices=["0.6B", "1.7B"],
-        default=None,
-        help="Model size to use (default: from config).",
-    )
-    parser.add_argument(
-        "--no-save",
-        action="store_true",
-        help="Don't save files, just generate (for testing).",
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose logging.",
-    )
+    # Common options
+    parser.add_argument("--lang", "-l", default=None, help="Target language")
+    parser.add_argument("--output-dir", "-o", default=None, help="Output directory")
+    parser.add_argument("--prefix", "-p", default=None, help="Output filename prefix")
+    parser.add_argument("--combine", "-c", action="store_true", help="Combine into one file")
+    parser.add_argument("--pause", type=float, default=0.5, help="Pause between segments (sec)")
+    parser.add_argument("--model-size", choices=["0.6B", "1.7B"], default=None)
+    parser.add_argument("--no-save", action="store_true", help="Don't save files")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
 
-    return parser.parse_args()
+    sub = parser.add_subparsers(dest="mode", help="Generation mode")
 
+    # -- clone --
+    clone_p = sub.add_parser("clone", help="Clone a voice from reference audio")
+    clone_p.add_argument("texts", nargs="+", help="Text(s) to generate")
+    clone_p.add_argument("--ref", "-r", required=True, help="Reference audio file")
+    clone_p.add_argument("--transcript", "-t", default=None, help="Transcript of reference")
+
+    # -- custom --
+    custom_p = sub.add_parser("custom", help="Use a predefined speaker")
+    custom_p.add_argument("texts", nargs="+", help="Text(s) to generate")
+    custom_p.add_argument("--speaker", "-s", default="Ryan", help="Speaker name")
+    custom_p.add_argument("--instruct", "-i", default=None, help="Style instruction")
+
+    # -- design --
+    design_p = sub.add_parser("design", help="Design a voice from description")
+    design_p.add_argument("texts", nargs="+", help="Text(s) to generate")
+    design_p.add_argument("--desc", "-d", required=True, help="Voice description")
+
+    # Backwards compat: allow --ref without subcommand
+    parser.add_argument("--ref", "-r", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--transcript", "-t", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("texts", nargs="*", default=[], help=argparse.SUPPRESS)
+
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    # Default mode to 'clone' if --ref is provided without subcommand
+    if args.mode is None and args.ref:
+        args.mode = "clone"
+    elif args.mode is None and args.texts:
+        parser.error("Please specify a mode: clone, custom, or design")
+
+    return args
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def resolve_ref_audio(ref: str) -> Path:
-    """Resolve reference audio path – check as-is first, then in voices dir."""
+    """Resolve reference audio – check as-is, then in voices dir."""
     path = Path(ref)
     if path.exists():
         return path
-
-    # Try in voices directory
     voices_path = config.voices_dir / ref
     if voices_path.exists():
         return voices_path
-
     print(f"❌ Referenz-Audio nicht gefunden: {ref}")
-    print(f"   Gesucht in: {path.resolve()}")
-    print(f"   Gesucht in: {voices_path}")
+    print(f"   Gesucht: {path.resolve()}")
+    print(f"   Gesucht: {voices_path}")
     sys.exit(1)
 
+
+def print_progress(i: int, n: int, text: str) -> None:
+    """Print progress to stdout."""
+    print(f"  [{i}/{n}] {text[:70]}")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     args = parse_args()
 
+    if not args.mode:
+        print("Usage: python scripts/clone_from_file.py {clone|custom|design} [options] texts...")
+        print("       python scripts/clone_from_file.py --help")
+        sys.exit(0)
+
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Override model size if specified
     if args.model_size:
         config.model_size = args.model_size
 
-    ref_path = resolve_ref_audio(args.ref)
     output_dir = Path(args.output_dir) if args.output_dir else config.output_dir
-
-    print(f"📎 Referenz: {ref_path}")
-    print(f"📁 Output:   {output_dir}")
-    print(f"🌐 Sprache:  {args.lang or config.default_language}")
-    print(f"📝 Texte:    {len(args.texts)}")
-    print()
+    lang = args.lang or config.default_language
 
     engine = TTSEngine()
 
-    result = engine.clone_voice(
-        ref_audio=ref_path,
-        texts=args.texts,
-        language=args.lang,
-        ref_text=args.transcript,
-        output_prefix=args.prefix,
-        save=not args.no_save,
-        output_dir=output_dir,
-    )
+    # ── Clone ──
+    if args.mode == "clone":
+        ref_path = resolve_ref_audio(args.ref)
+        prefix = args.prefix or "clone"
 
-    # Combine if requested
-    if args.combine and len(result.audio_segments) > 1:
-        combined = combine_audio_segments(
-            result.audio_segments,
-            result.sample_rate,
-            args.pause,
+        print(f"🔊 Voice Clone")
+        print(f"   Referenz:  {ref_path}")
+        print(f"   Sprache:   {lang}")
+        print(f"   Modell:    {config.model_size}")
+        print(f"   Texte:     {len(args.texts)}")
+        print()
+
+        result = engine.clone_voice(
+            ref_audio=ref_path,
+            texts=args.texts,
+            language=lang,
+            ref_text=args.transcript,
+            output_prefix=prefix,
+            save=not args.no_save,
+            output_dir=output_dir,
+            on_progress=print_progress,
         )
-        combined_path = output_dir / f"{args.prefix}_combined.wav"
+
+    # ── Custom ──
+    elif args.mode == "custom":
+        prefix = args.prefix or f"custom_{args.speaker.lower()}"
+
+        print(f"🗣️ Custom Voice")
+        print(f"   Sprecher:  {args.speaker}")
+        print(f"   Sprache:   {lang}")
+        print(f"   Modell:    {config.model_size}")
+        print(f"   Texte:     {len(args.texts)}")
+        print()
+
+        result = engine.generate_custom(
+            texts=args.texts,
+            speaker=args.speaker,
+            language=lang,
+            instruct=args.instruct,
+            output_prefix=prefix,
+            save=not args.no_save,
+            output_dir=output_dir,
+            on_progress=print_progress,
+        )
+
+    # ── Design ──
+    elif args.mode == "design":
+        prefix = args.prefix or "designed"
+
+        print(f"✨ Voice Design")
+        print(f"   Beschr.:   {args.desc[:60]}...")
+        print(f"   Sprache:   {lang}")
+        print(f"   Modell:    {config.model_size}")
+        print(f"   Texte:     {len(args.texts)}")
+        print()
+
+        result = engine.design_voice(
+            texts=args.texts,
+            voice_description=args.desc,
+            language=lang,
+            output_prefix=prefix,
+            save=not args.no_save,
+            output_dir=output_dir,
+            on_progress=print_progress,
+        )
+
+    else:
+        print(f"❌ Unbekannter Modus: {args.mode}")
+        sys.exit(1)
+
+    # Combine
+    if args.combine and len(result.audio_segments) > 1:
+        combined = combine_audio_segments(result.audio_segments, result.sample_rate, args.pause)
+        combined_path = output_dir / f"{prefix}_combined.wav"
         save_audio(combined, result.sample_rate, combined_path)
         print(f"\n✅ Kombiniert: {combined_path}")
 
-    print(f"\n🎉 Fertig! {len(result.audio_segments)} Audio(s) generiert.")
+    print(f"\n🎉 {result.summary}")
 
 
 if __name__ == "__main__":
