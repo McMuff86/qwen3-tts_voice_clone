@@ -6,6 +6,9 @@ Qwen3-TTS-12Hz-1.7B-CustomVoice/
 Qwen3-TTS-12Hz-1.7B-VoiceDesign/
 Qwen3-TTS-Tokenizer-12Hz/
 
+# Environment
+.env
+
 # Python
 __pycache__/
 *.py[cod]
