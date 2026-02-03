@@ -15,6 +15,9 @@ from pathlib import Path
 import gradio as gr
 import numpy as np
 
+import subprocess
+import shutil
+
 from src.config import config
 from src.engine import TTSEngine, TTSResult
 from src.audio_utils import combine_audio_segments, save_audio
@@ -59,6 +62,54 @@ MODEL_SIZES = ["1.7B", "0.6B"]
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def transcribe_audio(audio_path: str | None, language: str = "German") -> str:
+    """Transcribe audio using Whisper."""
+    if not audio_path:
+        return "❌ Bitte zuerst eine Audio-Datei auswählen!"
+    
+    if not Path(audio_path).exists():
+        return f"❌ Datei nicht gefunden: {audio_path}"
+    
+    # Map language to whisper code
+    lang_map = {
+        "German": "de", "English": "en", "French": "fr", "Spanish": "es",
+        "Italian": "it", "Portuguese": "pt", "Russian": "ru", 
+        "Japanese": "ja", "Korean": "ko", "Chinese": "zh"
+    }
+    lang_code = lang_map.get(language, "de")
+    
+    # Check for whisper-transcribe script
+    whisper_script = Path.home() / ".local/bin/whisper-transcribe"
+    if not whisper_script.exists():
+        whisper_cli = shutil.which("whisper-cli")
+        if not whisper_cli:
+            return "❌ Whisper nicht gefunden. Bitte whisper-cpp installieren."
+        whisper_script = None
+    
+    try:
+        if whisper_script:
+            result = subprocess.run(
+                [str(whisper_script), str(audio_path), lang_code],
+                capture_output=True, text=True, timeout=120
+            )
+        else:
+            result = subprocess.run(
+                [whisper_cli, "-f", str(audio_path), "-l", lang_code, "--no-timestamps"],
+                capture_output=True, text=True, timeout=120
+            )
+        
+        if result.returncode == 0:
+            transcript = result.stdout.strip()
+            lines = [l.strip() for l in transcript.split('\n') if l.strip() and not l.startswith('[')]
+            return ' '.join(lines)
+        else:
+            return f"❌ Whisper Fehler: {result.stderr}"
+    except subprocess.TimeoutExpired:
+        return "❌ Whisper Timeout (>120s)"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
 
 def get_voice_files() -> list[str]:
     """Get list of voice files in the voices directory."""
@@ -322,12 +373,15 @@ def build_app() -> gr.Blocks:
                             sources=["upload"],
                         )
 
-                        reference_text = gr.Textbox(
-                            label="Transkript (optional)",
-                            placeholder="Was wird im Referenz-Audio gesagt...",
-                            info="Verbessert die Qualität deutlich!",
-                            lines=2,
-                        )
+                        with gr.Row():
+                            reference_text = gr.Textbox(
+                                label="Transkript (optional)",
+                                placeholder="Was wird im Referenz-Audio gesagt...",
+                                info="Verbessert die Qualität deutlich!",
+                                lines=2,
+                                scale=4,
+                            )
+                            transcribe_btn = gr.Button("🎤", size="sm", min_width=50, scale=1)
 
                     with gr.Column(scale=1):
                         gr.Markdown("### 2. Text generieren")
@@ -375,6 +429,22 @@ def build_app() -> gr.Blocks:
                     inputs=voice_dropdown,
                     outputs=preview_audio,
                 )
+                
+                # Transcribe button - uses dropdown or upload
+                def do_transcribe(dropdown: str | None, upload: str | None, lang: str) -> str:
+                    if upload:
+                        return transcribe_audio(upload, lang)
+                    elif dropdown:
+                        path = str(config.voices_dir / dropdown)
+                        return transcribe_audio(path, lang)
+                    return "❌ Bitte zuerst eine Audio-Datei auswählen!"
+                
+                transcribe_btn.click(
+                    fn=do_transcribe,
+                    inputs=[voice_dropdown, voice_upload, clone_language],
+                    outputs=reference_text,
+                )
+                
                 clone_btn.click(
                     fn=clone_voice,
                     inputs=[
