@@ -11,6 +11,10 @@ qwen-tts
 torch
 torchaudio
 
+# Pinned versions (qwen-tts compatibility)
+transformers==4.57.3
+huggingface-hub<1.0
+
 # Audio processing
 soundfile
 numpy

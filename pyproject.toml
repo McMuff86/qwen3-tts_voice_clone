@@ -11,6 +11,8 @@ dependencies = [
     "soundfile",
     "numpy",
     "gradio",
+    "transformers==4.57.3",
+    "huggingface-hub<1.0",
 ]
 
 [project.optional-dependencies]
