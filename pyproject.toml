@@ -25,6 +25,9 @@ notebook = [
 flash = [
     "flash-attn",
 ]
+whisper = [
+    "faster-whisper",
+]
 
 [project.scripts]
 qwen-tts-app = "src.app:main"

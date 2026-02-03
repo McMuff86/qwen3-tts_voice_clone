@@ -64,7 +64,7 @@ MODEL_SIZES = ["1.7B", "0.6B"]
 # ---------------------------------------------------------------------------
 
 def transcribe_audio(audio_path: str | None, language: str = "German") -> str:
-    """Transcribe audio using Whisper."""
+    """Transcribe audio using Whisper (faster-whisper or whisper-cli)."""
     if not audio_path:
         return "❌ Bitte zuerst eine Audio-Datei auswählen!"
     
@@ -79,12 +79,27 @@ def transcribe_audio(audio_path: str | None, language: str = "German") -> str:
     }
     lang_code = lang_map.get(language, "de")
     
-    # Check for whisper-transcribe script
+    # Try faster-whisper (Python, GPU-accelerated)
+    try:
+        from faster_whisper import WhisperModel
+        logger.info("Using faster-whisper for transcription...")
+        
+        # Use small model for good quality/speed balance
+        model = WhisperModel("small", device="cuda", compute_type="float16")
+        segments, _ = model.transcribe(audio_path, language=lang_code)
+        transcript = " ".join(seg.text.strip() for seg in segments)
+        return transcript if transcript else "❌ Keine Sprache erkannt"
+    except ImportError:
+        logger.info("faster-whisper not installed, trying CLI...")
+    except Exception as e:
+        logger.warning(f"faster-whisper failed: {e}, trying CLI...")
+    
+    # Fallback: whisper-cli (command line)
     whisper_script = Path.home() / ".local/bin/whisper-transcribe"
     if not whisper_script.exists():
         whisper_cli = shutil.which("whisper-cli")
         if not whisper_cli:
-            return "❌ Whisper nicht gefunden. Bitte whisper-cpp installieren."
+            return "❌ Whisper nicht gefunden.\nInstalliere mit: uv pip install faster-whisper"
         whisper_script = None
     
     try:

@@ -25,6 +25,10 @@ ipywidgets
 # Optional: for recorder.py (currently not needed, uses WAV)
 # pydub
 
+# Optional: Whisper transcription (for auto-transcript feature)
+# GPU-accelerated on Windows/Linux with CUDA
+faster-whisper
+
 # Optional: Flash Attention (requires CUDA 12.4+)
 # See: https://huggingface.co/lldacing/flash-attention-windows-wheel
 # flash-attn
