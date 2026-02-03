@@ -68,6 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     clone_p.add_argument("texts", nargs="+", help="Text(s) to generate")
     clone_p.add_argument("--ref", "-r", required=True, help="Reference audio file")
     clone_p.add_argument("--transcript", "-t", default=None, help="Transcript of reference")
+    clone_p.add_argument("--auto-transcript", "-a", action="store_true", 
+                         help="Auto-transcribe reference using Whisper")
 
     # -- custom --
     custom_p = sub.add_parser("custom", help="Use a predefined speaker")
@@ -104,6 +106,51 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def transcribe_with_whisper(audio_path: Path, lang: str = "de") -> str | None:
+    """Transcribe audio using whisper-cli (if available)."""
+    import subprocess
+    import shutil
+    
+    # Check for whisper-transcribe script
+    whisper_script = Path.home() / ".local/bin/whisper-transcribe"
+    if not whisper_script.exists():
+        # Try whisper-cli directly
+        whisper_cli = shutil.which("whisper-cli")
+        if not whisper_cli:
+            print("⚠️  Whisper nicht gefunden. Installiere whisper-cpp oder nutze --transcript.")
+            return None
+        whisper_script = None
+    
+    try:
+        if whisper_script:
+            # Use our wrapper script
+            result = subprocess.run(
+                [str(whisper_script), str(audio_path), lang],
+                capture_output=True, text=True, timeout=120
+            )
+        else:
+            # Direct whisper-cli call
+            result = subprocess.run(
+                [whisper_cli, "-f", str(audio_path), "-l", lang, "--no-timestamps"],
+                capture_output=True, text=True, timeout=120
+            )
+        
+        if result.returncode == 0:
+            transcript = result.stdout.strip()
+            # Clean up whisper output (remove timestamps, empty lines)
+            lines = [l.strip() for l in transcript.split('\n') if l.strip() and not l.startswith('[')]
+            return ' '.join(lines)
+        else:
+            print(f"⚠️  Whisper Fehler: {result.stderr}")
+            return None
+    except subprocess.TimeoutExpired:
+        print("⚠️  Whisper Timeout (>120s)")
+        return None
+    except Exception as e:
+        print(f"⚠️  Whisper Fehler: {e}")
+        return None
+
 
 def resolve_ref_audio(ref: str) -> Path:
     """Resolve reference audio – check as-is, then in voices dir."""
@@ -153,9 +200,21 @@ def main() -> None:
     if args.mode == "clone":
         ref_path = resolve_ref_audio(args.ref)
         prefix = args.prefix or "clone"
+        
+        # Auto-transcribe if requested
+        transcript = args.transcript
+        if getattr(args, 'auto_transcript', False) and not transcript:
+            print(f"🎤 Auto-Transkription mit Whisper...")
+            transcript = transcribe_with_whisper(ref_path, lang[:2].lower())
+            if transcript:
+                print(f"   Erkannt: \"{transcript}\"")
+            else:
+                print(f"   (Keine Transkription - fahre ohne fort)")
 
         print(f"🔊 Voice Clone")
         print(f"   Referenz:  {ref_path}")
+        if transcript:
+            print(f"   Transkript: \"{transcript[:60]}{'...' if len(transcript or '') > 60 else ''}\"")
         print(f"   Sprache:   {lang}")
         print(f"   Modell:    {config.model_size}")
         print(f"   Texte:     {len(args.texts)}")
@@ -165,7 +224,7 @@ def main() -> None:
             ref_audio=ref_path,
             texts=args.texts,
             language=lang,
-            ref_text=args.transcript,
+            ref_text=transcript,
             output_prefix=prefix,
             save=not args.no_save,
             output_dir=output_dir,
