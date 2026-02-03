@@ -79,13 +79,27 @@ def transcribe_audio(audio_path: str | None, language: str = "German") -> str:
     }
     lang_code = lang_map.get(language, "de")
     
-    # Try faster-whisper (Python, GPU-accelerated)
+    # Try openai-whisper (Python, GPU-accelerated)
+    try:
+        import whisper
+        logger.info("Using openai-whisper for transcription...")
+        
+        # Use base model for good quality/speed balance
+        model = whisper.load_model("base")
+        result = model.transcribe(audio_path, language=lang_code)
+        transcript = result.get("text", "").strip()
+        return transcript if transcript else "❌ Keine Sprache erkannt"
+    except ImportError:
+        logger.info("openai-whisper not installed, trying faster-whisper...")
+    except Exception as e:
+        logger.warning(f"openai-whisper failed: {e}, trying faster-whisper...")
+    
+    # Try faster-whisper as fallback
     try:
         from faster_whisper import WhisperModel
         logger.info("Using faster-whisper for transcription...")
         
-        # Use small model for good quality/speed balance
-        model = WhisperModel("small", device="cuda", compute_type="float16")
+        model = WhisperModel("base", device="cuda", compute_type="float16")
         segments, _ = model.transcribe(audio_path, language=lang_code)
         transcript = " ".join(seg.text.strip() for seg in segments)
         return transcript if transcript else "❌ Keine Sprache erkannt"

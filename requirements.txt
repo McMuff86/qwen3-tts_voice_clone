@@ -26,8 +26,9 @@ ipywidgets
 # pydub
 
 # Optional: Whisper transcription (for auto-transcript feature)
-# GPU-accelerated on Windows/Linux with CUDA
-faster-whisper
+# openai-whisper is more stable on Windows
+openai-whisper
+# faster-whisper  # Alternative, faster but has ctranslate2 issues on Windows
 
 # Optional: Flash Attention (requires CUDA 12.4+)
 # See: https://huggingface.co/lldacing/flash-attention-windows-wheel
