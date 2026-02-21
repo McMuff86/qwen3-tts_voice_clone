@@ -22,6 +22,10 @@ numpy
 # Web UI
 gradio
 
+# REST API
+fastapi
+uvicorn[standard]
+
 # Jupyter Notebook support
 ipykernel
 ipywidgets
